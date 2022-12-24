@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 	"time"
+	"sort"
 )
 
 var testBowl PastaBowl
@@ -19,6 +20,53 @@ func TestMain(m *testing.M) {
 	// Run tests
 	ret := m.Run()
 	os.Exit(ret)
+}
+
+func TestListFiles(t *testing.T) {
+	var err error
+	var p1, p2 Pasta
+	var bowl PastaBowl
+
+	bowl.Directory = "pasta_test2"
+	os.Mkdir(bowl.Directory, os.ModePerm)
+	defer os.RemoveAll(bowl.Directory)
+
+	p1.Mime = "text/plain"
+	p1.ExpireDate = 0
+	p1.Name = "p1"
+	if err = bowl.InsertPasta(&p1); err != nil {
+		t.Fatalf("Error inserting pasta 1: %s", err)
+		return
+	}
+	p2.Mime = "application/json"
+	p2.ExpireDate = time.Now().Unix() + 10000
+	p2.Name = "p2"
+	if err = bowl.InsertPasta(&p2); err != nil {
+		t.Fatalf("Error inserting pasta 2: %s", err)
+		return
+	}
+
+	pastas, err := bowl.ListPastas()
+	if err != nil {
+		t.Fatalf("Error in listing file: %s", err)
+	}
+	if len(pastas) != 2 {
+		t.Logf("pasta count = %d", len(pastas))
+		t.Fatalf("should get 2 pastas!")
+	}
+
+	sort.SliceStable(pastas, func(i, j int) bool {
+		return pastas[i].Name < pastas[j].Name
+	})
+
+	if pastas[0].Name != p1.Name {
+		t.Logf("files[0] = %s", pastas[0].Name)
+		t.Fatalf("p1 not found")
+	}
+	if pastas[1].Name != p2.Name {
+		t.Logf("files[1] = %s", pastas[1].Name)
+		t.Fatalf("p2 not found")
+	}
 }
 
 func TestMetadata(t *testing.T) {

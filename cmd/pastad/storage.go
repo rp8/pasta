@@ -16,6 +16,7 @@ import (
 type Pasta struct {
 	Id         string // id of the pasta
 	Token      string // modification token
+	Name			 string // pasta name
 	Filename   string // filename for the pasta on the disk
 	ExpireDate int64  // Unix() date when it will expire
 	Size       int64  // file size
@@ -37,7 +38,7 @@ func randBytes(n int) []byte {
 		panic(err)
 	}
 	if i < n {
-		panic(fmt.Errorf("Random generator empty"))
+		panic(fmt.Errorf("random generator empty"))
 	}
 	return buf
 }
@@ -63,7 +64,7 @@ func randByte() byte {
 		panic(err)
 	}
 	if n < 1 {
-		panic(fmt.Errorf("Random generator empty"))
+		panic(fmt.Errorf("random generator empty"))
 	}
 	return buf[0]
 }
@@ -122,6 +123,24 @@ func (bowl *PastaBowl) RemoveExpired() error {
 	return nil
 }
 
+// list all files
+func (bowl *PastaBowl) ListPastas() ([]Pasta, error) {
+	var pastas []Pasta
+	var pasta Pasta
+	fileInfos, err := ioutil.ReadDir(bowl.Directory)
+	if err != nil {
+			return nil, err
+	}
+	for _, file := range fileInfos {
+		pasta, err = bowl.GetPasta(file.Name())
+		if err != nil {
+			return nil, err
+		}
+		pastas = append(pastas, pasta)
+	}
+	return pastas, nil
+}
+
 // get pasta metadata
 func (bowl *PastaBowl) GetPasta(id string) (Pasta, error) {
 	pasta := Pasta{Id: "", Filename: bowl.filename(id)}
@@ -162,8 +181,9 @@ func (bowl *PastaBowl) GetPasta(id string) (Pasta, error) {
 			pasta.ExpireDate, _ = strconv.ParseInt(value, 10, 64)
 		} else if name == "mime" {
 			pasta.Mime = value
+		} else if name == "name" {
+			pasta.Name = value
 		}
-
 	}
 	// All good
 	pasta.Id = id
@@ -202,7 +222,7 @@ func (bowl *PastaBowl) getPastaFile(id string, flag int) (*os.File, error) {
 	}
 	// This should never occur
 	file.Close()
-	return nil, errors.New("Unexpected end of block")
+	return nil, errors.New("unexpected end of block")
 }
 
 // Get the file instance to the pasta content (read-only)
@@ -241,6 +261,11 @@ func (bowl *PastaBowl) InsertPasta(pasta *Pasta) error {
 	}
 	if pasta.Mime != "" {
 		if _, err := file.Write([]byte(fmt.Sprintf("mime:%s\n", pasta.Mime))); err != nil {
+			return err
+		}
+	}
+	if pasta.Name != "" {
+		if _, err := file.Write([]byte(fmt.Sprintf("name:%s\n", pasta.Name))); err != nil {
 			return err
 		}
 	}

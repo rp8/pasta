@@ -23,6 +23,7 @@ import (
 
 type Config struct {
 	BaseUrl         string `toml:"BaseURL"`  // Instance base URL
+	HostUrl         string `toml:"HostURL"`  // Instance host URL
 	PastaDir        string `toml:"PastaDir"` // dir where pasta are stored
 	BindAddr        string `toml:"BindAddress"`
 	MaxPastaSize    int64  `toml:"MaxPastaSize"` // Max bin size in bytes
@@ -36,6 +37,7 @@ type Config struct {
 type ParserConfig struct {
 	ConfigFile      *string
 	BaseURL         *string
+	HostURL         *string
 	PastaDir        *string
 	BindAddr        *string
 	MaxPastaSize    *int // parser doesn't support int64
@@ -54,7 +56,7 @@ func CreateDefaultConfigfile(filename string) error {
 	if hostname == "" {
 		hostname = "localhost"
 	}
-	content := []byte(fmt.Sprintf("BaseURL = 'http://%s:8199'\nBindAddress = ':8199'\nPastaDir = 'pastas'\nMaxPastaSize = 5242880       # 5 MiB\nPastaCharacters = 8\nExpire = 2592000             # 1 month\nCleanup = 3600               # cleanup interval in seconds\nRequestDelay = 2000", hostname))
+	content := []byte(fmt.Sprintf("BaseURL = 'http://%s:8199'\nHostURL = 'http://%s:8199'\nBindAddress = ':8199'\nPastaDir = 'pastas'\nMaxPastaSize = 5242880       # 5 MiB\nPastaCharacters = 8\nExpire = 2592000             # 1 month\nCleanup = 3600               # cleanup interval in seconds\nRequestDelay = 2000", hostname, hostname))
 	file, err := os.Create(filename)
 	if err != nil {
 		return err
@@ -72,6 +74,7 @@ func CreateDefaultConfigfile(filename string) error {
 // SetDefaults sets the default values to a config instance
 func (cf *Config) SetDefaults() {
 	cf.BaseUrl = "http://localhost:8199"
+	cf.HostUrl = "http://localhost:8199"
 	cf.PastaDir = "pastas/"
 	cf.BindAddr = "127.0.0.1:8199"
 	cf.MaxPastaSize = 1024 * 1024 * 25 // Default max size: 25 MB
@@ -120,6 +123,7 @@ func getenv_i64(key string, defval int64) int64 {
 // ReadEnv reads the environmental variables and sets the config accordingly
 func (cf *Config) ReadEnv() {
 	cf.BaseUrl = getenv("PASTA_BASEURL", cf.BaseUrl)
+	cf.HostUrl = getenv("PASTA_HOSTURL", cf.HostUrl)
 	cf.PastaDir = getenv("PASTA_PASTADIR", cf.PastaDir)
 	cf.BindAddr = getenv("PASTA_BINDADDR", cf.BindAddr)
 	cf.MaxPastaSize = getenv_i64("PASTA_MAXSIZE", cf.MaxPastaSize)
@@ -133,6 +137,9 @@ func (cf *Config) ReadEnv() {
 func (pc *ParserConfig) ApplyTo(cf *Config) {
 	if pc.BaseURL != nil && *pc.BaseURL != "" {
 		cf.BaseUrl = *pc.BaseURL
+	}
+	if pc.HostURL != nil && *pc.HostURL != "" {
+		cf.HostUrl = *pc.HostURL
 	}
 	if pc.PastaDir != nil && *pc.PastaDir != "" {
 		cf.PastaDir = *pc.PastaDir
@@ -199,7 +206,7 @@ func ExtractPastaId(path string) (string, error) {
  * EXTENSION = MIMETYPE
  */
 func loadMimeTypes(filename string) (map[string]string, error) {
-	ret := make(map[string]string, 0)
+	ret := make(map[string]string)
 
 	file, err := os.OpenFile(filename, os.O_RDONLY, 0400)
 	if err != nil {
@@ -378,6 +385,16 @@ func ReceivePasta(r *http.Request) (Pasta, error) {
 		// TODO: Add maximum expiration parameter
 	}
 
+	if name := r.FormValue("name"); name != "" {
+		log.Println("name=", name)
+		pasta.Name = name
+	}
+
+	_, header, err := r.FormFile("file")
+	if err == nil && header != nil && header.Filename != "" {
+		pasta.Name = header.Filename
+	}
+
 	pasta.Id = removeNonAlphaNumeric(bowl.GenerateRandomBinId(cf.PastaCharacters))
 	// InsertPasta sets filename
 	if err = bowl.InsertPasta(&pasta); err != nil {
@@ -394,9 +411,9 @@ func ReceivePasta(r *http.Request) (Pasta, error) {
 		// Check if the input is coming from the POST form
 		inputs := r.URL.Query()["input"]
 		if len(inputs) > 0 && inputs[0] == "form" {
-			// Copy reader, as r.FromValue consumes it's contents
+			// Copy reader, as r.FromValue consumes its contents
 			defer r.Body.Close()
-			reader = r.Body
+			pasta.Name = r.FormValue("name")
 			if content := r.FormValue("content"); content != "" {
 				reader = io.NopCloser(strings.NewReader(content))
 			} else {
@@ -414,13 +431,14 @@ func ReceivePasta(r *http.Request) (Pasta, error) {
 	}
 	if pasta.Size >= cf.MaxPastaSize {
 		log.Println("Max size exceeded while receiving bin")
-		return pasta, errors.New("Bin size exceeded")
+		return pasta, errors.New("bin size exceeded")
 	}
 	if pasta.Size == 0 {
 		bowl.DeletePasta(pasta.Id)
 		pasta.Id = ""
 		pasta.Filename = ""
 		pasta.Token = ""
+		pasta.Name = ""
 		pasta.ExpireDate = 0
 		return pasta, nil
 	}
@@ -508,7 +526,6 @@ BadRequest:
 	} else {
 		fmt.Fprintf(w, "%s", err)
 	}
-	return
 }
 
 func handlerPost(w http.ResponseWriter, r *http.Request) {
@@ -526,7 +543,7 @@ func handlerPost(w http.ResponseWriter, r *http.Request) {
 		} else {
 			log.Printf("Received bin %s (%d bytes) from %s", pasta.Id, pasta.Size, r.RemoteAddr)
 			w.WriteHeader(http.StatusOK)
-			url := fmt.Sprintf("%s/%s", cf.BaseUrl, pasta.Id)
+			url := fmt.Sprintf("%s/%s", cf.HostUrl, pasta.Id)
 			// Return format
 			retFormats := r.URL.Query()["ret"]
 			retFormat := ""
@@ -537,16 +554,16 @@ func handlerPost(w http.ResponseWriter, r *http.Request) {
 				// Website as return format
 				fmt.Fprintf(w, "<!doctype html><html><head><title>pasta</title></head>\n")
 				fmt.Fprintf(w, "<body>\n")
-				fmt.Fprintf(w, "<h1>pasta</h1>\n")
-				deleteLink := fmt.Sprintf("%s/delete?id=%s&token=%s", cf.BaseUrl, pasta.Id, pasta.Token)
-				fmt.Fprintf(w, "<p>Here is your pasta: <a href=\"%s\">%s</a>.<br/>", url, url)
-				fmt.Fprintf(w, "<a href=\"%s\">Delete</a> it in case you don't want it anymore.</p>\n", deleteLink)
+				fmt.Fprintf(w, "<h1>Pastebin</h1>\n")
+				deleteLink := fmt.Sprintf("%s/delete?id=%s&token=%s", cf.HostUrl, pasta.Id, pasta.Token)
+				fmt.Fprintf(w, "<p>Here is your pasta: <a href=\"%s\">%s</a> %s.<br/>", url, url, pasta.Name)
+				fmt.Fprintf(w, "<a href=\"%s\">Delete</a></p>\n", deleteLink)
 				fmt.Fprintf(w, "<pre>")
 				if pasta.ExpireDate > 0 {
 					fmt.Fprintf(w, "Expiration:         %s\n", time.Unix(pasta.ExpireDate, 0).Format("2006-01-02-15:04:05"))
 				}
 				fmt.Fprintf(w, "Modification token: %s\n</pre>\n", pasta.Token)
-				fmt.Fprintf(w, "<p>That was fun! Let's <a href=\"%s\">upload another one</a>.</p>\n", cf.BaseUrl)
+				fmt.Fprintf(w, "<p><a href=\"%s/paste\">New Paste</a></p>\n", cf.HostUrl)
 				fmt.Fprintf(w, "</body></html>")
 			} else if retFormat == "json" {
 				// Dont use json package, the reply is simple enough to build it on-the-fly
@@ -568,7 +585,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			goto BadRequest
 		}
 		if id == "" {
-			handlerIndex(w, r)
+			indexHtml(w, r)
 		} else {
 			pasta, err := bowl.GetPasta(id)
 			if err != nil {
@@ -621,7 +638,6 @@ BadRequest:
 	} else {
 		fmt.Fprintf(w, "%s", err)
 	}
-	return
 }
 
 func handlerHealth(w http.ResponseWriter, r *http.Request) {
@@ -675,35 +691,49 @@ func timeHumanReadable(timestamp int64) string {
 	}
 }
 
-func handlerIndex(w http.ResponseWriter, r *http.Request) {
+func indexHtml(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "<!doctype html><html><head><title>pasta</title></head>\n")
 	fmt.Fprintf(w, "<body>\n")
-	fmt.Fprintf(w, "<h1>pasta</h1>\n")
-	fmt.Fprintf(w, "<p>Stupid simple paste service written in <code>go</code><br/>\n")
-	fmt.Fprintf(w, "Checkout our fresh CLI utilities in <a href=\"https://github.com/grisu48/pasta/releases/\" target=\"_BLANK\">releases</a> because you are amazing!</p>\n")
-	fmt.Fprintf(w, "<h2>Post a new and fresh pasta</h2>\n")
+	fmt.Fprintf(w, "<h1>Pastebin</h1>\n")
+	fmt.Fprintf(w, "<ul><a href=\"%s/paste\">New Paste</a>", cf.HostUrl)
+	pastas, err := bowl.ListPastas()
+	if err != nil {
+		fmt.Fprint(w, "<li>no pasta found</li>")
+	} else {
+		for _, p := range pastas {
+			fmt.Fprintf(w, "<li><a href=\"%s/%s\">%s</a></li>\n", cf.HostUrl, p.Id, p.Name)
+		}
+	}
+
+	fmt.Fprintf(w, "</ul>\n")
+	fmt.Fprintf(w, "</body></html>")
+}
+
+func handlerPaste(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "<!doctype html><html><head><title>pasta</title></head>\n")
+	fmt.Fprintf(w, "<body>\n")
+	fmt.Fprintf(w, "<h1>Pastebin</h1>\n")
 	fmt.Fprintf(w, "<p>Just POST your file at the server, e.g. ")
-	fmt.Fprintf(w, "<code>curl -X POST '%s' --data-binary @FILE</code></p>\n", cf.BaseUrl)
+	fmt.Fprintf(w, "<code>curl -X POST '%s' --data-binary @FILE</code></p>", cf.HostUrl)
 	if cf.DefaultExpire > 0 {
-		fmt.Fprintf(w, "<p>pastas expire by default after %s - Enjoy them while they are fresh!</p>\n", timeHumanReadable(cf.DefaultExpire))
+		fmt.Fprintf(w, "<p>Pastas expire by default after %s.</p>\n", timeHumanReadable(cf.DefaultExpire))
 	}
 	fmt.Fprintf(w, "<h3>File upload</h3>")
-	fmt.Fprintf(w, "<p>Upload your file and make a fresh pasta out of it:</p>")
 	fmt.Fprintf(w, "<form enctype=\"multipart/form-data\" method=\"post\" action=\"/?ret=html\">\n")
 	fmt.Fprintf(w, "<input type=\"file\" name=\"file\">\n")
 	fmt.Fprintf(w, "<input type=\"submit\" value=\"Upload\">\n")
 	fmt.Fprintf(w, "</form>\n")
 	fmt.Fprintf(w, "<h3>Text paste</h3>")
-	fmt.Fprintf(w, "<p>Just paste your contents in the textfield and hit the <tt>pasta</tt> button below</p>\n")
 	fmt.Fprintf(w, "<form method=\"post\" action=\"/?input=form&ret=html\">\n")
+	fmt.Fprintf(w, "<label for=\"name\">Name</label>\n")
+	fmt.Fprintf(w, "<input type=\"text\" name=\"name\">\n")
+	fmt.Fprintf(w, "<input type=\"submit\" value=\"Paste\"><br/>\n")
 	if cf.MaxPastaSize > 0 {
-		fmt.Fprintf(w, "<textarea name=\"content\" rows=\"10\" cols=\"80\" maxlength=\"%d\"></textarea><br/>\n", cf.MaxPastaSize)
+		fmt.Fprintf(w, "<textarea name=\"content\" rows=\"15\" cols=\"80\" maxlength=\"%d\"></textarea><br/>\n", cf.MaxPastaSize)
 	} else {
-		fmt.Fprintf(w, "<textarea name=\"content\" rows=\"10\" cols=\"80\"></textarea><br/>\n")
+		fmt.Fprintf(w, "<textarea name=\"content\" rows=\"15\" cols=\"80\"></textarea><br/>\n")
 	}
-	fmt.Fprintf(w, "<input type=\"submit\" value=\"Pasta!\">\n")
 	fmt.Fprintf(w, "</form>\n")
-	fmt.Fprintf(w, "<p>project page: <a href=\"https://github.com/grisu48/pasta\" target=\"_BLANK\">github.com/grisu48/pasta</a></p>\n")
 	fmt.Fprintf(w, "</body></html>")
 }
 
@@ -741,6 +771,7 @@ func main() {
 	parser := argparse.NewParser("pastad", "pasta server")
 	parseCf.ConfigFile = parser.String("c", "config", &argparse.Options{Default: "", Help: "Set config file"})
 	parseCf.BaseURL = parser.String("B", "baseurl", &argparse.Options{Help: "Set base URL for instance"})
+	parseCf.HostURL = parser.String("H", "hosturl", &argparse.Options{Help: "Set host URL for instance"})
 	parseCf.PastaDir = parser.String("d", "dir", &argparse.Options{Help: "Set pasta data directory"})
 	parseCf.BindAddr = parser.String("b", "bind", &argparse.Options{Help: "Address to bind server to"})
 	parseCf.MaxPastaSize = parser.Int("s", "size", &argparse.Options{Help: "Maximum allowed size for a pasta"})
@@ -787,7 +818,7 @@ func main() {
 
 	// Load MIME types file
 	if cf.MimeTypesFile == "" {
-		mimeExtensions = make(map[string]string, 0)
+		mimeExtensions = make(map[string]string)
 	} else {
 		var err error
 		mimeExtensions, err = loadMimeTypes(cf.MimeTypesFile)
@@ -805,6 +836,7 @@ func main() {
 
 	// Setup webserver
 	http.HandleFunc("/", handler)
+	http.HandleFunc("/paste", handlerPaste)
 	http.HandleFunc("/health", handlerHealth)
 	http.HandleFunc("/delete", handlerDelete)
 	http.HandleFunc("/robots.txt", handlerRobots)

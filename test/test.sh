@@ -101,6 +101,7 @@ kill %2
 stat test_config.toml
 # Ensure the test config contains the expected entries
 grep 'BaseURL[[:space:]]=' test_config.toml
+grep 'HostURL[[:space:]]=' test_config.toml
 grep 'BindAddress[[:space:]]*=' test_config.toml
 grep 'PastaDir[[:space:]]*=' test_config.toml
 grep 'MaxPastaSize[[:space:]]*=' test_config.toml

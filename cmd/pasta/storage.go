@@ -15,18 +15,20 @@ type Pasta struct {
 	Date     int64  `json:"date"`
 	Expire   int64  `json:"expire"`
 	Filename string `json:"filename"`
+	Name     string `json:"name"`
 }
 
 type Storage struct {
 	Pastas   []Pasta
 	file     *os.File
 	filename string
+	name     string
 	expired  int // number of expired pastas when loading
 }
 
 /* Format for writing to storage*/
 func (pasta *Pasta) format() string {
-	return fmt.Sprintf("%s:%d:%d:%s:%s", pasta.Token, pasta.Date, pasta.Expire, strings.Replace(pasta.Filename, ":", "", -1), pasta.Url)
+	return fmt.Sprintf("%s:%d:%d:%s:%s:%s", pasta.Token, pasta.Date, pasta.Expire, pasta.Name, strings.Replace(pasta.Filename, ":", "", -1), pasta.Url)
 }
 
 func OpenStorage(filename string) (Storage, error) {
@@ -54,10 +56,10 @@ func (stor *Storage) Open(filename string) error {
 			return err
 		}
 		split := strings.Split(scanner.Text(), ":")
-		if len(split) < 5 {
+		if len(split) < 6 {
 			continue
 		}
-		pasta := Pasta{Token: split[0], Filename: split[3], Url: strings.Join(split[4:], ":")}
+		pasta := Pasta{Token: split[0], Name: split[3], Filename: split[4], Url: strings.Join(split[5:], ":")}
 		pasta.Date, _ = strconv.ParseInt(split[1], 10, 64)
 		pasta.Expire, _ = strconv.ParseInt(split[2], 10, 64)
 		// Don't add expired pastas and mark storage as dirty for re-write in the end

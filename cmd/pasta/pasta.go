@@ -254,6 +254,7 @@ func main() {
 				// Push file
 				pasta, err := push(file)
 				pasta.Filename = getFilename(filename)
+				pasta.Name = filename
 				pasta.Date = time.Now().Unix()
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "%s\n", err)
@@ -266,7 +267,7 @@ func main() {
 				if len(files) == 1 {
 					fmt.Printf("%s\n", pasta.Url)
 				} else {
-					fmt.Printf("%s - %s\n", pasta.Filename, pasta.Url)
+					fmt.Printf("%s, %s - %s\n", pasta.Name, pasta.Filename, pasta.Url)
 				}
 			}
 		} else {
@@ -288,10 +289,11 @@ func main() {
 			for i, pasta := range stor.Pastas {
 				t := time.Unix(pasta.Date, 0)
 				filename := pasta.Filename
+				name := pasta.Name
 				if filename == "" {
 					filename = "<none>"
 				}
-				fmt.Printf("%-3d  %-30s   %-19s   %s\n", i, filename, t.Format("2006-01-02 15:04:05"), pasta.Url)
+				fmt.Printf("%-3d  %-30s %-30s  %-19s   %s\n", i, name, filename, t.Format("2006-01-02 15:04:05"), pasta.Url)
 			}
 		}
 	} else if action == "rm" { // remove pastas

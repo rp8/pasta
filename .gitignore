@@ -27,4 +27,6 @@ __debug_bin
 bins
 *.toml
 pasta_test
+pasta_test2
 /pastas
+test/pastas
